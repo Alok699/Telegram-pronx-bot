@@ -5,7 +5,7 @@ import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-BOT_TOKEN = "8110138902:AAGWKzSEkVRaR0dbHgehQRgEBJobV8ZqA3o"
+BOT_TOKEN = "8118283984:AAEFh5VCmAd5WLn_lKAfYU38T6wzo0Hynr8"
 ADMIN_IDS = [7687968365, 6368862755, 6492557901]
 CHANNEL_USERNAME = "@xvideos_op"
 MOVIES_FILE = "movies.json"
