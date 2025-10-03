@@ -126,7 +126,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: 
         return
-    await update.message.reply_text("📁 <b>Upload File</b>
+    await update.message.reply_text("📁 <b>Upload File</b>\n\n📤 Send video now...", parse_mode="HTML")
 
 📤 Send video now...", parse_mode="HTML")
     context.user_data['adding_movie'] = True
