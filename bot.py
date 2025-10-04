@@ -1,290 +1,308 @@
+"""
+telegram_adult_safe_bot.py
+Requirements:
+  pip install python-telegram-bot==20.3 aiosqlite
+
+Usage:
+  1) Put your BOT token into BOT_TOKEN variable below.
+  2) Create movies.json with mapping: {"code1": {"file_id": "<telegram_file_id>", "title":"...","license":"..."}}
+  3) Run: python telegram_adult_safe_bot.py
+Note: This bot is meant to be policy-compliant and does NOT provide ways to evade Telegram moderation.
+"""
+
 import json
 import logging
-import time
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+import asyncio
+from datetime import datetime, timedelta
+import aiosqlite
+from pathlib import Path
 
-BOT_TOKEN = "7853358520:AAFoROdeDDcwL7bcEyGSJ7965cPZXcnGQhU"
-ADMIN_IDS = [7687968365, 6368862755, 6492557901]
-CHANNEL_USERNAME = "@xvideos_op"
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+)
+
+# ---------- CONFIG ----------
+BOT_TOKEN = "7853358520:AAFoROdeDDcwL7bcEyGSJ7965cPZXcnGQhU"  # <-- replace with your token
+ADMIN_IDS = [7687968365, 6368862755, 6492557901]  # put admin telegram user ids here
 MOVIES_FILE = "movies.json"
-BATCHES_FILE = "batches.json"
-DELETE_TIME_MINUTES = 30
+DB_FILE = "bot_data.db"
+DELETE_TIME_MINUTES = 10
+RATE_LIMIT_PER_HOUR = 6  # max requests per user per hour
+# ----------------------------
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-def load_json(filename):
+# load movies mapping (code -> metadata including Telegram file_id)
+def load_movies():
+    p = Path(MOVIES_FILE)
+    if not p.exists():
+        return {}
     try:
-        with open(filename, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.error("Failed to load movies.json: %s", e)
         return {}
 
-def save_json(filename, data):
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+MOVIES = load_movies()
 
-MOVIES = load_json(MOVIES_FILE)
-BATCHES = load_json(BATCHES_FILE)
+# ---------- DB helpers ----------
+async def init_db():
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute("""CREATE TABLE IF NOT EXISTS users (
+                               telegram_id INTEGER PRIMARY KEY,
+                               consented INTEGER DEFAULT 0,
+                               consent_time TEXT
+                             )""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS requests (
+                               id INTEGER PRIMARY KEY AUTOINCREMENT,
+                               telegram_id INTEGER,
+                               code TEXT,
+                               ts TEXT,
+                               delivered INTEGER DEFAULT 0,
+                               delivered_chat INTEGER,
+                               delivered_message INTEGER
+                             )""")
+        await db.execute("""CREATE TABLE IF NOT EXISTS deletions (
+                               id INTEGER PRIMARY KEY AUTOINCREMENT,
+                               request_id INTEGER,
+                               ts TEXT
+                             )""")
+        await db.commit()
 
-async def auto_delete(context: ContextTypes.DEFAULT_TYPE):
-    job = context.job
-    try:
-        await context.bot.delete_message(job.chat_id, job.data['message_id'])
-        logger.info(f"Deleted message {job.data['message_id']} from chat {job.chat_id}")
-    except Exception as e:
-        logger.error(f"Delete error: {e}")
-
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
-    chat_id = update.effective_chat.id
-    DELETION_WARNING = ("⚠️ <b>Important Notice</b>\n\n"
-        "⏰ Files expire in <b>30 minutes</b>\n"
-        "💾 Save immediately\n\n"
-        "🔒 Automated delivery system")
-    
-    if args:
-        code = args[0].lower()
-        if code in BATCHES:
-            batch = BATCHES[code]
-            await update.message.reply_text(DELETION_WARNING, parse_mode="HTML")
-            for idx, video_code in enumerate(batch['videos'], 1):
-                if video_code in MOVIES:
-                    movie = MOVIES[video_code]
-                    caption = (f"📁 <b>File {idx}/{len(batch['videos'])}</b>\n"
-                        "━━━━━━━━━━━━━━━\n"
-                        f"⏰ Expires: {DELETE_TIME_MINUTES} min")
-                    buttons = [
-                        [InlineKeyboardButton("💾 Save", url="https://t.me/+42777")], 
-                        [InlineKeyboardButton("📢 Channel", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")]
-                    ]
-                    sent = await context.bot.send_video(
-                        chat_id=chat_id, 
-                        video=movie['file_id'], 
-                        caption=caption, 
-                        parse_mode="HTML", 
-                        reply_markup=InlineKeyboardMarkup(buttons)
-                    )
-                    context.job_queue.run_once(
-                        auto_delete, 
-                        DELETE_TIME_MINUTES * 60, 
-                        chat_id=chat_id, 
-                        data={'message_id': sent.message_id}
-                    )
-                    import asyncio
-                    await asyncio.sleep(3)
-            return
-        elif code in MOVIES:
-            movie = MOVIES[code]
-            await update.message.reply_text(DELETION_WARNING, parse_mode="HTML")
-            caption = ("📁 <b>File Delivery</b>\n"
-                "━━━━━━━━━━━━━━━\n"
-                f"⏰ Expires: {DELETE_TIME_MINUTES} min")
-            buttons = [
-                [InlineKeyboardButton("💾 Save", url="https://t.me/+42777")], 
-                [InlineKeyboardButton("📢 Channel", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")]
-            ]
-            sent = await context.bot.send_video(
-                chat_id=chat_id, 
-                video=movie['file_id'], 
-                caption=caption, 
-                parse_mode="HTML", 
-                reply_markup=InlineKeyboardMarkup(buttons)
-            )
-            context.job_queue.run_once(
-                auto_delete, 
-                DELETE_TIME_MINUTES * 60, 
-                chat_id=chat_id, 
-                data={'message_id': sent.message_id}
-            )
-            return
-    
-    welcome_text = ("👋 <b>Welcome to File Delivery Bot</b>\n\n"
-        "📤 <b>How to use:</b>\n"
-        "• Click on file links to get videos\n"
-        "• Files auto-delete after 30 minutes\n"
-        "• Save immediately after receiving\n\n"
-        "👨‍💼 <b>Admin Commands:</b>\n"
-        "/add - Upload new file\n"
-        "/addbatch - Create collection\n"
-        "/list - View all files\n"
-        "/listbatch - View collections\n"
-        "/delete - Remove file\n"
-        "/deletebatch - Remove collection\n"
-        "/stats - Bot statistics\n\n"
-        "🔒 Secure • ⚡ Fast • 🤖 Automated")
-    await update.message.reply_text(welcome_text, parse_mode="HTML")
-
-async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: 
-        return
-    await update.message.reply_text("📁 <b>Upload File</b>\n\n📤 Send video now...", parse_mode="HTML")
-    context.user_data['adding_movie'] = True
-
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: 
-        return
-    if context.user_data.get('adding_movie'):
-        video = update.message.video
-        context.user_data['temp_file_id'] = video.file_id
-        context.user_data['adding_movie'] = False
-        context.user_data['awaiting_code'] = True
-        await update.message.reply_text("✅ Received\n\n🔑 Enter code:", parse_mode="HTML")
-
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: 
-        return
-    text = update.message.text.strip()
-    
-    if context.user_data.get('awaiting_code'):
-        if text.lower() in MOVIES:
-            await update.message.reply_text("❌ Code exists")
-            return
-        context.user_data['movie_code'] = text.lower()
-        context.user_data['awaiting_code'] = False
-        context.user_data['awaiting_title'] = True
-        await update.message.reply_text("✅ Code saved\n\n📝 Enter label:")
-
-    elif context.user_data.get('awaiting_title'):
-        context.user_data['movie_title'] = text
-        context.user_data['awaiting_title'] = False
-        context.user_data['awaiting_description'] = True
-        await update.message.reply_text("✅ Label saved\n\n📄 Note (or skip):")
-    
-    elif context.user_data.get('awaiting_description'):
-        description = "" if text.lower() == 'skip' else text
-        movie_code = context.user_data['movie_code']
-        MOVIES[movie_code] = {
-            'file_id': context.user_data['temp_file_id'], 
-            'title': context.user_data['movie_title'], 
-            'description': description, 
-            'added_time': int(time.time())
-        }
-        save_json(MOVIES_FILE, MOVIES)
-        bot_username = (await context.bot.get_me()).username
-        link = f"https://t.me/{bot_username}?start={movie_code}"
-        await update.message.reply_text(
-            f"✅ Uploaded\n\n📝 {context.user_data['movie_title']}\n🔑 {movie_code}\n🔗 {link}\n\n📊 Total: {len(MOVIES)}"
+async def set_consented(telegram_id: int):
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO users (telegram_id, consented, consent_time) VALUES (?, ?, ?)",
+            (telegram_id, 1, datetime.utcnow().isoformat()),
         )
-        context.user_data.clear()
-    
-    elif context.user_data.get('batch_awaiting_codes'):
-        codes = [c.strip().lower() for c in text.split(',')]
-        valid_codes = [c for c in codes if c in MOVIES]
-        if len(codes) != len(valid_codes):
-            await update.message.reply_text("❌ Invalid codes")
-            return
-        context.user_data['batch_codes'] = valid_codes
-        context.user_data['batch_awaiting_codes'] = False
-        context.user_data['batch_awaiting_title'] = True
-        await update.message.reply_text(f"✅ {len(valid_codes)} verified\n\n📝 Name:")
-    
-    elif context.user_data.get('batch_awaiting_title'):
-        context.user_data['batch_title'] = text
-        context.user_data['batch_awaiting_title'] = False
-        context.user_data['batch_awaiting_code'] = True
-        await update.message.reply_text("✅ Saved\n\n🔑 Batch code:")
-    
-    elif context.user_data.get('batch_awaiting_code'):
-        batch_code = text.lower().replace(' ', '_')
-        if batch_code in BATCHES:
-            await update.message.reply_text("❌ Exists")
-            return
-        BATCHES[batch_code] = {
-            'title': context.user_data['batch_title'], 
-            'videos': context.user_data['batch_codes'], 
-            'created_time': int(time.time())
-        }
-        save_json(BATCHES_FILE, BATCHES)
-        bot_username = (await context.bot.get_me()).username
-        batch_link = f"https://t.me/{bot_username}?start={batch_code}"
-        await update.message.reply_text(
-            f"✅ Created\n\n📦 {context.user_data['batch_title']}\n🔑 {batch_code}\n📁 {len(context.user_data['batch_codes'])} files\n🔗 {batch_link}"
+        await db.commit()
+
+async def user_consented(telegram_id: int) -> bool:
+    async with aiosqlite.connect(DB_FILE) as db:
+        cur = await db.execute("SELECT consented FROM users WHERE telegram_id=?", (telegram_id,))
+        row = await cur.fetchone()
+        return bool(row and row[0] == 1)
+
+async def log_request(telegram_id: int, code: str, delivered=False, chat=None, message=None):
+    async with aiosqlite.connect(DB_FILE) as db:
+        cur = await db.execute(
+            "INSERT INTO requests (telegram_id, code, ts, delivered, delivered_chat, delivered_message) VALUES (?, ?, ?, ?, ?, ?)",
+            (telegram_id, code, datetime.utcnow().isoformat(), int(delivered), chat, message),
         )
-        context.user_data.clear()
+        await db.commit()
+        return cur.lastrowid
 
-async def addbatch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: 
-        return
-    if not MOVIES:
-        await update.message.reply_text("❌ No files")
-        return
-    await update.message.reply_text("📦 Create Collection\n\n📝 Codes (comma-separated):")
-    context.user_data['batch_awaiting_codes'] = True
+async def mark_deleted(request_id: int):
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute("INSERT INTO deletions (request_id, ts) VALUES (?, ?)", (request_id, datetime.utcnow().isoformat()))
+        await db.commit()
 
-async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: 
-        return
-    if MOVIES:
-        message = "📁 Files\n━━━━━━━━━━━━━━━\n\n" + "\n".join([
-            f"{i}. {code} - {data['title']}" for i, (code, data) in enumerate(MOVIES.items(), 1)
-        ]) + f"\n\n📊 Total: {len(MOVIES)}"
-    else:
-        message = "❌ No files"
-    await update.message.reply_text(message)
+async def count_requests_last_hour(telegram_id: int) -> int:
+    cutoff = (datetime.utcnow() - timedelta(hours=1)).isoformat()
+    async with aiosqlite.connect(DB_FILE) as db:
+        cur = await db.execute(
+            "SELECT COUNT(*) FROM requests WHERE telegram_id=? AND ts>=?", (telegram_id, cutoff)
+        )
+        row = await cur.fetchone()
+        return row[0] if row else 0
 
-async def listbatch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: 
-        return
-    if BATCHES:
-        message = "📦 Collections\n━━━━━━━━━━━━━━━\n\n" + "\n".join([
-            f"{i}. {code} - {data['title']} ({len(data['videos'])} files)" 
-            for i, (code, data) in enumerate(BATCHES.items(), 1)
-        ]) + f"\n\n📊 Total: {len(BATCHES)}"
-    else:
-        message = "❌ No collections"
-    await update.message.reply_text(message)
+# ---------- Utility: simple placeholder NSFW check ----------
+# In production integrate a trusted NSFW classifier service and human moderation queue.
+async def nsfw_check_allowed(movie_meta: dict) -> bool:
+    # placeholder: we assume your MOVIES file contains license info and consent fields.
+    # Deny if license missing.
+    if not movie_meta.get("license"):
+        return False
+    # Other checks can be added (e.g., content flagged)
+    return True
 
-async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: 
-        return
-    if not context.args:
-        await update.message.reply_text("❌ Usage: /delete code")
-        return
-    code = context.args[0].lower()
-    if code in MOVIES:
-        del MOVIES[code]
-        save_json(MOVIES_FILE, MOVIES)
-        await update.message.reply_text("✅ Deleted")
-    else:
-        await update.message.reply_text("❌ Not found")
-
-async def deletebatch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: 
-        return
-    if not context.args:
-        await update.message.reply_text("❌ Usage: /deletebatch code")
-        return
-    code = context.args[0].lower()
-    if code in BATCHES:
-        del BATCHES[code]
-        save_json(BATCHES_FILE, BATCHES)
-        await update.message.reply_text("✅ Deleted")
-    else:
-        await update.message.reply_text("❌ Not found")
-
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: 
-        return
-    await update.message.reply_text(
-        f"📊 Status\n━━━━━━━━━━━━━━━\n\n📁 Files: {len(MOVIES)}\n📦 Collections: {len(BATCHES)}\n👥 Admins: {len(ADMIN_IDS)}\n⏰ Expire: {DELETE_TIME_MINUTES} min\n✅ Active"
+# ---------- Handlers ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "⚠️ *Adult Content Portal* ⚠️\n\n"
+        "Ye channel/ bot 18+ content provide karta hai. Use karne se pehle confirm karein ke aap 18+ hain aur local laws follow karte hain.\n\n"
+        "Press *I AM 18+* to continue."
     )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("I AM 18+ ✅", callback_data="consent_yes")]])
+    await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("add", add_command))
-    app.add_handler(CommandHandler("addbatch", addbatch_command))
-    app.add_handler(CommandHandler("list", list_command))
-    app.add_handler(CommandHandler("listbatch", listbatch_command))
-    app.add_handler(CommandHandler("delete", delete_command))
-    app.add_handler(CommandHandler("deletebatch", deletebatch_command))
-    app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(MessageHandler(filters.VIDEO & filters.User(ADMIN_IDS), handle_video))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.User(ADMIN_IDS), handle_text))
-    logger.info("🚀 Bot started!")
-    app.run_polling()
+async def consent_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    if query.data == "consent_yes":
+        await set_consented(uid)
+        await query.edit_message_text("Thanks. You are marked as consented. Use /help to learn commands.")
+        logger.info("User %s consented", uid)
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    txt = (
+        "Commands:\n"
+        "/start - show consent\n"
+        "/help - this message\n"
+        "/get <code> - request a video by code (free). Content auto-deletes after 10 minutes.\n\n"
+        "Buttons with each file include a *Report* option to notify admins.\n\n"
+        "Note: This bot keeps logs of deliveries and deletions for compliance."
+    )
+    await update.message.reply_text(txt)
+
+async def get_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    uid = user.id
+    args = context.args
+    if not await user_consented(uid):
+        await update.message.reply_text("Please confirm age first using /start and click *I AM 18+*.", parse_mode="Markdown")
+        return
+    if not args:
+        await update.message.reply_text("Usage: /get <code>")
+        return
+    code = args[0].lower().strip()
+    if code not in MOVIES:
+        await update.message.reply_text("Invalid code. Check and try again.")
+        return
+
+    # rate limit
+    cnt = await count_requests_last_hour(uid)
+    if cnt >= RATE_LIMIT_PER_HOUR:
+        await update.message.reply_text("Rate limit exceeded. Try again later.")
+        return
+
+    movie = MOVIES[code]
+    allowed = await nsfw_check_allowed(movie)
+    if not allowed:
+        await update.message.reply_text("This item is not available (missing license or blocked). Contact admins.")
+        return
+
+    # Send deletion warning
+    warn = f"⚠️ File expires in *{DELETE_TIME_MINUTES} minutes* — save if needed."
+    await update.message.reply_text(warn, parse_mode="Markdown")
+
+    # send video (file_id from MOVIES)
+    try:
+        sent = await context.bot.send_video(
+            chat_id=update.effective_chat.id,
+            video=movie["file_id"],
+            caption=f"📁 {movie.get('title','File')}\nExpires in {DELETE_TIME_MINUTES} minutes.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("⚠️ Report", callback_data=f"report|{code}")]]
+            ),
+        )
+    except Exception as e:
+        logger.error("Failed to send video: %s", e)
+        await update.message.reply_text("Failed to deliver file. Contact admins.")
+        return
+
+    # schedule deletion
+    async def delete_job(ctx: ContextTypes.DEFAULT_TYPE):
+        try:
+            await ctx.bot.delete_message(chat_id=sent.chat_id, message_id=sent.message_id)
+            logger.info("Auto-deleted message %s:%s", sent.chat_id, sent.message_id)
+            # mark deletion in DB
+            await mark_deleted(request_id)
+            # notify admins optionally
+            for admin in ADMIN_IDS:
+                try:
+                    await ctx.bot.send_message(admin, f"Auto-deleted message {sent.message_id} in chat {sent.chat_id} (code {code})")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error("Error auto-deleting: %s", e)
+
+    # log request
+    request_id = await log_request(uid, code, delivered=True, chat=sent.chat_id, message=sent.message_id)
+
+    # schedule via job queue
+    context.job_queue.run_once(delete_job, DELETE_TIME_MINUTES * 60)
+
+async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data or ""
+    user = query.from_user
+    if data.startswith("report|"):
+        code = data.split("|", 1)[1]
+        # notify admins with report details
+        text = f"🚨 Report from @{user.username or user.id}\nUser id: {user.id}\nReported item code: {code}\nTime: {datetime.utcnow().isoformat()}"
+        for admin in ADMIN_IDS:
+            try:
+                await context.bot.send_message(admin, text)
+            except Exception:
+                logger.exception("Failed to notify admin")
+        await query.edit_message_text("Thank you. Report sent to moderators.")
+    else:
+        await query.edit_message_text("Unknown action.")
+
+# Admin commands
+async def revoke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in ADMIN_IDS:
+        await update.message.reply_text("Unauthorized.")
+        return
+    args = context.args
+    if len(args) != 2:
+        await update.message.reply_text("Usage: /revoke <chat_id> <message_id>")
+        return
+    try:
+        chat_id = int(args[0])
+        msg_id = int(args[1])
+        await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        await update.message.reply_text("Deleted.")
+    except Exception as e:
+        await update.message.reply_text(f"Error: {e}")
+
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in ADMIN_IDS:
+        await update.message.reply_text("Unauthorized.")
+        return
+    # simple stats: total requests and deletions
+    async with aiosqlite.connect(DB_FILE) as db:
+        cur = await db.execute("SELECT COUNT(*) FROM requests")
+        total_reqs = (await cur.fetchone())[0]
+        cur = await db.execute("SELECT COUNT(*) FROM deletions")
+        total_dels = (await cur.fetchone())[0]
+    await update.message.reply_text(f"Total requests: {total_reqs}\nTotal deletions: {total_dels}")
+
+# Fallback for unknown text
+async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Unknown command. Use /help.")
+
+# ---------- main ----------
+async def main():
+    await init_db()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(consent_cb, pattern="^consent_yes$"))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("get", get_cmd))
+    app.add_handler(CallbackQueryHandler(callback_router, pattern="^(report\|)"))
+    app.add_handler(CommandHandler("revoke", revoke_cmd))
+    app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), unknown))
+
+    logger.info("Bot starting...")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()  # keeps webhook off; polling used
+    await app.idle()
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
