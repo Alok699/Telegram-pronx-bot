@@ -1,1 +1,4 @@
-{}
+{
+  "abc123": {"file_id": "BAACAgUAAxkBAA...", "title": "Sample Video", "license":"LICENSE-ID-12345"},
+  "batch1": {"file_id": "..." }
+}
