@@ -121,15 +121,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🔒 Secure • ⚡ Fast • 🤖 Automated"""
     
-    await update.message.reply_text(welcome_text, parse_mode="HTML")
-
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: 
-        return
-    await update.message.reply_text("📁 <b>Upload File</b>\n\n📤 Send video now...", parse_mode="HTML")
-
-📤 Send video now...", parse_mode="HTML")
-    context.user_data['adding_movie'] = True
+if update.effective_user.id not in ADMIN_IDS: 
+    return
+await update.message.reply_text("📁 <b>Upload File</b>\n\n📤 Send video now...", parse_mode="HTML")
+context.user_data['adding_movie'] = True
 
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: 
