@@ -29,7 +29,6 @@ MOVIES = load_json(MOVIES_FILE)
 BATCHES = load_json(BATCHES_FILE)
 
 async def auto_delete(context: ContextTypes.DEFAULT_TYPE):
-    """Job callback to delete message after specified time"""
     job = context.job
     try:
         await context.bot.delete_message(job.chat_id, job.data['message_id'])
@@ -40,12 +39,10 @@ async def auto_delete(context: ContextTypes.DEFAULT_TYPE):
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     chat_id = update.effective_chat.id
-    DELETION_WARNING = """⚠️ <b>Important Notice</b>
-
-⏰ Files expire in <b>30 minutes</b>
-💾 Save immediately
-
-🔒 Automated delivery system"""
+    DELETION_WARNING = ("⚠️ <b>Important Notice</b>\n\n"
+        "⏰ Files expire in <b>30 minutes</b>\n"
+        "💾 Save immediately\n\n"
+        "🔒 Automated delivery system")
     
     if args:
         code = args[0].lower()
@@ -55,9 +52,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for idx, video_code in enumerate(batch['videos'], 1):
                 if video_code in MOVIES:
                     movie = MOVIES[video_code]
-                    caption = f"""📁 <b>File {idx}/{len(batch['videos'])}</b>
-━━━━━━━━━━━━━━━
-⏰ Expires: {DELETE_TIME_MINUTES} min"""
+                    caption = (f"📁 <b>File {idx}/{len(batch['videos'])}</b>\n"
+                        "━━━━━━━━━━━━━━━\n"
+                        f"⏰ Expires: {DELETE_TIME_MINUTES} min")
                     buttons = [
                         [InlineKeyboardButton("💾 Save", url="https://t.me/+42777")], 
                         [InlineKeyboardButton("📢 Channel", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")]
@@ -81,9 +78,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif code in MOVIES:
             movie = MOVIES[code]
             await update.message.reply_text(DELETION_WARNING, parse_mode="HTML")
-            caption = f"""📁 <b>File Delivery</b>
-━━━━━━━━━━━━━━━
-⏰ Expires: {DELETE_TIME_MINUTES} min"""
+            caption = ("📁 <b>File Delivery</b>\n"
+                "━━━━━━━━━━━━━━━\n"
+                f"⏰ Expires: {DELETE_TIME_MINUTES} min")
             buttons = [
                 [InlineKeyboardButton("💾 Save", url="https://t.me/+42777")], 
                 [InlineKeyboardButton("📢 Channel", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")]
@@ -103,29 +100,27 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
     
-    welcome_text = """👋 <b>Welcome to File Delivery Bot</b>
+    welcome_text = ("👋 <b>Welcome to File Delivery Bot</b>\n\n"
+        "📤 <b>How to use:</b>\n"
+        "• Click on file links to get videos\n"
+        "• Files auto-delete after 30 minutes\n"
+        "• Save immediately after receiving\n\n"
+        "👨‍💼 <b>Admin Commands:</b>\n"
+        "/add - Upload new file\n"
+        "/addbatch - Create collection\n"
+        "/list - View all files\n"
+        "/listbatch - View collections\n"
+        "/delete - Remove file\n"
+        "/deletebatch - Remove collection\n"
+        "/stats - Bot statistics\n\n"
+        "🔒 Secure • ⚡ Fast • 🤖 Automated")
+    await update.message.reply_text(welcome_text, parse_mode="HTML")
 
-📤 <b>How to use:</b>
-• Click on file links to get videos
-• Files auto-delete after 30 minutes
-• Save immediately after receiving
-
-👨‍💼 <b>Admin Commands:</b>
-/add - Upload new file
-/addbatch - Create collection
-/list - View all files
-/listbatch - View collections
-/delete - Remove file
-/deletebatch - Remove collection
-/stats - Bot statistics
-
-🔒 Secure • ⚡ Fast • 🤖 Automated"""
-    
 async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-if update.effective_user.id not in ADMIN_IDS: 
-    return
-await update.message.reply_text("📁 <b>Upload File</b>\n\n📤 Send video now...", parse_mode="HTML")
-context.user_data['adding_movie'] = True
+    if update.effective_user.id not in ADMIN_IDS: 
+        return
+    await update.message.reply_text("📁 <b>Upload File</b>\n\n📤 Send video now...", parse_mode="HTML")
+    context.user_data['adding_movie'] = True
 
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: 
@@ -135,9 +130,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['temp_file_id'] = video.file_id
         context.user_data['adding_movie'] = False
         context.user_data['awaiting_code'] = True
-        await update.message.reply_text("✅ Received
-
-🔑 Enter code:", parse_mode="HTML")
+        await update.message.reply_text("✅ Received\n\n🔑 Enter code:", parse_mode="HTML")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: 
@@ -151,17 +144,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['movie_code'] = text.lower()
         context.user_data['awaiting_code'] = False
         context.user_data['awaiting_title'] = True
-        await update.message.reply_text("✅ Code saved
+        await update.message.reply_text("✅ Code saved\n\n📝 Enter label:")
 
-📝 Enter label:")
-    
     elif context.user_data.get('awaiting_title'):
         context.user_data['movie_title'] = text
         context.user_data['awaiting_title'] = False
         context.user_data['awaiting_description'] = True
-        await update.message.reply_text("✅ Label saved
-
-📄 Note (or skip):")
+        await update.message.reply_text("✅ Label saved\n\n📄 Note (or skip):")
     
     elif context.user_data.get('awaiting_description'):
         description = "" if text.lower() == 'skip' else text
@@ -176,13 +165,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_username = (await context.bot.get_me()).username
         link = f"https://t.me/{bot_username}?start={movie_code}"
         await update.message.reply_text(
-            f"✅ Uploaded
-
-📝 {context.user_data['movie_title']}
-🔑 {movie_code}
-🔗 {link}
-
-📊 Total: {len(MOVIES)}"
+            f"✅ Uploaded\n\n📝 {context.user_data['movie_title']}\n🔑 {movie_code}\n🔗 {link}\n\n📊 Total: {len(MOVIES)}"
         )
         context.user_data.clear()
     
@@ -195,17 +178,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['batch_codes'] = valid_codes
         context.user_data['batch_awaiting_codes'] = False
         context.user_data['batch_awaiting_title'] = True
-        await update.message.reply_text(f"✅ {len(valid_codes)} verified
-
-📝 Name:")
+        await update.message.reply_text(f"✅ {len(valid_codes)} verified\n\n📝 Name:")
     
     elif context.user_data.get('batch_awaiting_title'):
         context.user_data['batch_title'] = text
         context.user_data['batch_awaiting_title'] = False
         context.user_data['batch_awaiting_code'] = True
-        await update.message.reply_text("✅ Saved
-
-🔑 Batch code:")
+        await update.message.reply_text("✅ Saved\n\n🔑 Batch code:")
     
     elif context.user_data.get('batch_awaiting_code'):
         batch_code = text.lower().replace(' ', '_')
@@ -221,12 +200,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_username = (await context.bot.get_me()).username
         batch_link = f"https://t.me/{bot_username}?start={batch_code}"
         await update.message.reply_text(
-            f"✅ Created
-
-📦 {context.user_data['batch_title']}
-🔑 {batch_code}
-📁 {len(context.user_data['batch_codes'])} files
-🔗 {batch_link}"
+            f"✅ Created\n\n📦 {context.user_data['batch_title']}\n🔑 {batch_code}\n📁 {len(context.user_data['batch_codes'])} files\n🔗 {batch_link}"
         )
         context.user_data.clear()
 
@@ -236,24 +210,16 @@ async def addbatch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not MOVIES:
         await update.message.reply_text("❌ No files")
         return
-    await update.message.reply_text("📦 Create Collection
-
-📝 Codes (comma-separated):")
+    await update.message.reply_text("📦 Create Collection\n\n📝 Codes (comma-separated):")
     context.user_data['batch_awaiting_codes'] = True
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: 
         return
     if MOVIES:
-        message = "📁 Files
-━━━━━━━━━━━━━━━
-
-" + "
-".join([
+        message = "📁 Files\n━━━━━━━━━━━━━━━\n\n" + "\n".join([
             f"{i}. {code} - {data['title']}" for i, (code, data) in enumerate(MOVIES.items(), 1)
-        ]) + f"
-
-📊 Total: {len(MOVIES)}"
+        ]) + f"\n\n📊 Total: {len(MOVIES)}"
     else:
         message = "❌ No files"
     await update.message.reply_text(message)
@@ -262,16 +228,10 @@ async def listbatch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: 
         return
     if BATCHES:
-        message = "📦 Collections
-━━━━━━━━━━━━━━━
-
-" + "
-".join([
+        message = "📦 Collections\n━━━━━━━━━━━━━━━\n\n" + "\n".join([
             f"{i}. {code} - {data['title']} ({len(data['videos'])} files)" 
             for i, (code, data) in enumerate(BATCHES.items(), 1)
-        ]) + f"
-
-📊 Total: {len(BATCHES)}"
+        ]) + f"\n\n📊 Total: {len(BATCHES)}"
     else:
         message = "❌ No collections"
     await update.message.reply_text(message)
@@ -308,19 +268,11 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: 
         return
     await update.message.reply_text(
-        f"📊 Status
-━━━━━━━━━━━━━━━
-
-📁 Files: {len(MOVIES)}
-📦 Collections: {len(BATCHES)}
-👥 Admins: {len(ADMIN_IDS)}
-⏰ Expire: {DELETE_TIME_MINUTES} min
-✅ Active"
+        f"📊 Status\n━━━━━━━━━━━━━━━\n\n📁 Files: {len(MOVIES)}\n📦 Collections: {len(BATCHES)}\n👥 Admins: {len(ADMIN_IDS)}\n⏰ Expire: {DELETE_TIME_MINUTES} min\n✅ Active"
     )
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
-    
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("add", add_command))
     app.add_handler(CommandHandler("addbatch", addbatch_command))
@@ -331,7 +283,6 @@ def main():
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(MessageHandler(filters.VIDEO & filters.User(ADMIN_IDS), handle_video))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.User(ADMIN_IDS), handle_text))
-    
     logger.info("🚀 Bot started!")
     app.run_polling()
 
